@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from fastapi import HTTPException   # was: from http.client import HTTPException
 from io import BytesIO
 
 from pypdf import PdfReader
@@ -9,17 +10,6 @@ class Chunk:
     page: int
     index: int
     text: str
-
-
-def extract_pages(pdf_bytes: bytes) -> list[tuple[int, str]]:
-    """Return [(page_number, text)] for pages that contain text."""
-    reader = PdfReader(BytesIO(pdf_bytes))
-    pages = []
-    for number, page in enumerate(reader.pages, start=1):
-        text = (page.extract_text() or "").strip()
-        if text:
-            pages.append((number, text))
-    return pages
 
 
 def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
@@ -46,12 +36,28 @@ def chunk_text(text: str, size: int = 800, overlap: int = 150) -> list[str]:
         start = next_start
     return [c for c in chunks if c]
 
+def extract_pages(pdf_bytes: bytes) -> list[tuple[int, str]]:
+    """Return [(page_number, text)] for pages that contain text."""
+    reader = PdfReader(BytesIO(pdf_bytes))
+    pages = []
+    for number, page in enumerate(reader.pages, start=1):
+        text = (page.extract_text() or "").strip()
+        if text:
+            pages.append((number, text))
+    return pages
 
-def chunk_pages(
-    pages: list[tuple[int, str]], size: int = 800, overlap: int = 150
-) -> list[Chunk]:
+
+def chunk_pages(    pdf_bytes: bytes,    size: int = 800, overlap: int = 150):
+    try:
+        pages=extract_pages(pdf_bytes)
+    except Exception:
+        raise HTTPException(400, "Could not read this PDF")
+    if not pages:
+        raise HTTPException(422, "No text found. Scanned PDFs are not supported yet")
+
     chunks = []
     for page_number, text in pages:
         for piece in chunk_text(text, size, overlap):
             chunks.append(Chunk(page=page_number, index=len(chunks), text=piece))
+    
     return chunks

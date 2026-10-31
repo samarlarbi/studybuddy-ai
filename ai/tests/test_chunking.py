@@ -29,9 +29,12 @@ def test_chunks_keep_their_page_numbers():
 
 
 def test_ingest_rejects_non_pdf():
-    r = client.post("/ingest", files={"file": ("a.txt", b"hello", "text/plain")})
+    r = client.post(
+        "/ingest",
+        data={"user_id": "u1", "document_id": "d1"},
+        files={"file": ("a.txt", b"hello", "text/plain")},
+    )
     assert r.status_code == 400
-
 
 def test_chunks_start_and_end_on_word_boundaries():
     words = [f"word{i}" for i in range(400)]

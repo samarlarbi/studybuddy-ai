@@ -1,51 +1,73 @@
-from dataclasses import asdict
+# app/main.py
+from contextlib import asynccontextmanager
+from io import BytesIO
+from pathlib import Path
+import uuid
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from pypdf import PdfReader
+from dotenv import load_dotenv
+from app.store import add_pdf, read_pdf, search_chunks, get_user_documents, get_all_users
+import logging
+from app.reg_service import generate_rag_answer
+from app.db import init_db
+from starlette.concurrency import run_in_threadpool
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from pydantic import BaseModel
-
-from app.chunking import chunk_pages, extract_pages
-
-app = FastAPI(title="Study Assistant AI")
-
-MAX_PDF_BYTES = 20 * 1024 * 1024  # 20 MB
-
-
-class AskRequest(BaseModel):
-    user_id: str
-    message: str
-    history: list[dict] = []
-
-
-class AskResponse(BaseModel):
-    reply: str
+logger = logging.getLogger(__name__)
+load_dotenv()
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
 
-@app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest):
-    return AskResponse(reply=f"Placeholder reply. You said: {req.message}")
+app = FastAPI(title="Academic RAG API", lifespan=lifespan)
 
 
-@app.post("/ingest")
-async def ingest(file: UploadFile = File(...)):
-    data = await file.read()
-    if len(data) > MAX_PDF_BYTES:
-        raise HTTPException(413, "File too large (20 MB max)")
-    if not data.startswith(b"%PDF-"):
-        raise HTTPException(400, "Only PDF files are supported")
+@app.post("/api/ask")
+async def ask_endpoint(
+    user_id: str = Form(...),
+    query: str = Form(...),
+        document_id: str | None = Form(None),          # restored: ask about an existing document
+
+    top_k: int = Form(5),
+file: UploadFile = File(None), 
+):
+    if isinstance(file, str) or (file is not None and not file.filename):
+        file = None
     try:
-        pages = extract_pages(data)
-    except Exception:
-        raise HTTPException(400, "Could not read this PDF")
-    if not pages:
-        raise HTTPException(422, "No text found. Scanned PDFs are not supported yet")
-    chunks = chunk_pages(pages)
-    return {
-        "pages_with_text": len(pages),
-        "chunks": len(chunks),
-        "preview": [asdict(c) for c in chunks[:3]],
-    }
+        if file is not None:
+            document_id = document_id or Path(file.filename or "").stem or str(uuid.uuid4())
+            data= await read_pdf(file)
+            await run_in_threadpool(add_pdf,user_id,document_id,data)
+        
+
+        # Pass extracted PDF text or fallback to database search
+        result =await run_in_threadpool(generate_rag_answer,
+            user_id=user_id,
+            query=query,
+            document_id=document_id,
+            top_k=top_k
+        )
+        return {**result, "document_id": document_id}   # the client reuses this id later
+    except HTTPException:
+        raise  
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+# Add this to your app/main.py
+@app.get("/api/documents/{user_id}")
+def list_user_documents(user_id: str):
+    try:
+        documents = get_user_documents(user_id=user_id)
+        return {"user_id": user_id, "documents": documents}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/api/users")
+def list_users():
+    try:
+        users = get_all_users()
+        return {"users": users}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
