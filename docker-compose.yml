@@ -10,6 +10,37 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:                           # "is the database ready?"
+      test: ["CMD-SHELL", "pg_isready -U fitcoach -d fitcoach"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ai:
+    build: ./ai
+    env_file: ./ai/.env                    # holds OPENAI_API_KEY
+    environment:
+      DATABASE_URL: postgresql+psycopg://fitcoach:fitcoach@db:5432/fitcoach
+    volumes:
+      - models:/models                     # keeps the 240 MB model between restarts
+    ports:
+      - "127.0.0.1:8000:8000"              # reachable from your PC only, not the network
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./api
+    env_file: ./api/.env
+    environment:
+      DATABASE_URL: postgresql://fitcoach:fitcoach@db:5432/fitcoach
+      AI_SERVICE_URL: http://ai:8000       # for the later NestJS to FastAPI call
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata:
+  models:
