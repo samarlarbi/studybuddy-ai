@@ -1,7 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.chunking import chunk_pages, chunk_text
+import app.chunking as ck
+from app.chunking import chunk_text
 from app.main import app
 
 client = TestClient(app)
@@ -21,20 +22,22 @@ def test_overlap_must_be_smaller_than_size():
         chunk_text("x", size=100, overlap=100)
 
 
-def test_chunks_keep_their_page_numbers():
-    pages = [(1, "a " * 600), (2, "b " * 600)]
-    chunks = chunk_pages(pages, size=300, overlap=50)
+def test_chunks_keep_their_page_numbers(monkeypatch):
+    # replace the PDF reader with fake pages, so no real PDF is needed
+    monkeypatch.setattr(ck, "extract_pages", lambda _: [(1, "a " * 600), (2, "b " * 600)])
+    chunks = ck.chunk_pages(b"%PDF-fake", size=300, overlap=50)
     assert {c.page for c in chunks} == {1, 2}
     assert [c.index for c in chunks] == list(range(len(chunks)))
 
 
-def test_ingest_rejects_non_pdf():
+def test_ask_rejects_non_pdf():
     r = client.post(
-        "/ingest",
-        data={"user_id": "u1", "document_id": "d1"},
+        "/api/ask",
+        data={"user_id": "u1", "query": "hi"},
         files={"file": ("a.txt", b"hello", "text/plain")},
     )
     assert r.status_code == 400
+
 
 def test_chunks_start_and_end_on_word_boundaries():
     words = [f"word{i}" for i in range(400)]
