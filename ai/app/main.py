@@ -25,7 +25,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Academic RAG API", lifespan=lifespan)
 
-
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 @app.post("/api/ask")
 async def ask_endpoint(
     user_id: str = Form(...),
@@ -57,6 +59,7 @@ file: UploadFile = File(None),
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 # Add this to your app/main.py
+
 @app.get("/api/documents/{user_id}")
 def list_user_documents(user_id: str):
     try:
